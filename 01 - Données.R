@@ -1,8 +1,10 @@
----
-title: "Débat télévisé du 20 mars 2017"
-output: github_md
----
-
+#' ---
+#' title: "Récupérer les tweets du débat du 20 mars 2017"
+#' author: "Florian Gaudin-Delrieu"
+#' date: "2017-03-21"
+#' output: github_document
+#' ---
+  
 library(rtweet)
 library(tidyverse)
 library(stringr)
@@ -19,7 +21,7 @@ library(purrr)
 #' candidat, puis nous généraliserons.
 #' 
 #' ## Un candidat Récupérons les tweets de Benoit Hamon
-hamon <- get_timeline("benoithamon", n = 50)
+hamon <- get_timeline("benoithamon")
 
 #' Y a-t-il les tweets du débat de dimanche ? #' Le débat a commencé à 21h, mais
 #' les premiers tweets apparaîssent comme créés à 20h, peut être que le champ
@@ -44,10 +46,22 @@ hamon_debat %>%
   head
 
 #' Il reste 40 tweets, et ils ont l'air d'être ceux retranscrivant ses paroles
-#' pendant le débat.
+#' pendant le débat.  
 
 #' ## Tous les candidats
 
 candidats <- c("benoithamon", "JLMelenchon","EmmanuelMacron",
                "MLP_officiel", "FrancoisFillon")
 
+tous_tweets <- map(candidats, get_timeline)
+
+#' Vérifions que nous avons bien tout récupéré.
+map_lgl(tous_tweets, ~heures_debat %within% interval(min(.x$created_at),
+                                                     max(.x$created_at)))
+#' C'est bon, nous pouvons filtrer les résultats
+tweets_debat <- map_df(tous_tweets, ~filter(.x, .x$created_at %within% heures_debat))
+
+table(tweets_debat$screen_name)
+#' Nous pouvons enregistrer les données.
+
+write_csv(tweets_debat, "tweets_debat.csv")
