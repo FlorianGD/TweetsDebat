@@ -1,0 +1,93 @@
+---
+title: "Débat télévisé du 20 mars 2017"
+author: "Florian Gaudin-Delrieu"
+date: "2017-03-21"
+output: html_notebook
+---
+# Qu'ont dit les candidats lors du débat ? 
+ 
+Nous avons récupéré les tweets envoyés par les candidats lors du débat télévisé du 20 mars 2017. Ces tweets par les comptes officiels approximeront le transcript de leurs paroles. Je vais utiliser la librairie `tidytext` pour l'analyse du contenu des tweets.
+
+```{r}
+library(tidytext)
+library(tidyverse)
+library(stringr)
+library(lubridate)
+library(purrr)
+library(forcats)
+```
+
+## Récupération et traitement des données
+
+```{r}
+tweets_debat <- read_csv("tweets_debat.csv")
+tweets_debat <- tweets_debat %>% 
+  mutate(nom = factor(screen_name)) %>%
+  select(-screen_name, -user_id, -status_id, -lang, -urls, -in_reply_to_status_status_id,
+         -in_reply_to_status_user_id, -source, -media_id, -media_url, -media_url_expanded, -c(coordinates:bounding_box_type)) %>% 
+  select(nom, everything())
+  
+```
+
+Qui a le plus tweeté ?
+```{r}
+ggplot(tweets_debat, aes(x = nom)) +
+  geom_bar(aes(fill = nom), show.legend = FALSE)
+```
+Marine Le Pen et Jean-Luc Mélenchon ont nettement plus tweeté que les autres candidats.  
+Y a-t-il une forte proportion de retweets ?
+```{r}
+with(tweets_debat, tapply(is_retweet, nom, mean))
+```
+
+Pour Jean-Luc Mélenchon, environ 16% des tweets envoyés pendant le débat sont des retweets, aucun pour les autres candidats. Nous allons filtrer les retweets, vu qu'ils ne représentent pas ce qu'a dit le candidat pendant le débat. Les colonnes `is_quote_status`, `quote_status_id` et `retweet_status_id` peuvent aussi être filtrées, vu qu'elles n'apportent aucune information.
+```{r}
+tweets_debat <- tweets_debat %>% 
+  filter(!is_retweet) %>% 
+  select(-c(is_quote_status:retweet_status_id))
+```
+
+## Utilisation de `tidytext`
+
+Nous allons maintenant pouvoir commencer à analyser le contenu des tweets. J'utilise ici une expression conseillée sur le site [tidy text mining](http://tidytextmining.com/twitter.html#word-frequencies-1). Cela enlève les liens, mais conserve les hashtags et les mentions.
+
+```{r}
+tidy_tweet <- tweets_debat %>%
+  select(1:3) %>% 
+  mutate(text = str_replace_all(text,                          "https://t.co/[A-Za-z\\d]+|http://[A-Za-z\\d]+|&amp;|&lt;|&gt;|RT|https", 
+                                "")) %>% 
+  unnest_tokens(mot, text)
+```
+
+Quels sont les mots les plus employés par chaque candidat ?
+```{r}
+tidy_tweet %>% 
+  group_by(nom) %>% 
+  count(mot, sort = TRUE)
+```
+
+Ce résultat n'est pas très intéressant, on trouve les mots clés du débat (débattf1 et legranddébat), ansi que des mots très communs. Nous allons filtrer les mots les plus communs à partir de la liste de `stopwords("french")` du package `tm`. J'ai ajouté les mots "a" et "c'est", qui ne sont pas dans la liste des stopwords, mais n'apportent pas d'information.
+```{r}
+tidy_tweet <- tidy_tweet %>% 
+  filter(!mot %in% c("débattf1","legranddébat", "legranddebat", "debattf1", "hamondebat", "a", "c'est", tm::stopwords("french")))
+```
+
+Faisons un graphe rapide des mots les plus employés par chaque candidat.
+```{r}
+top_mots <- tidy_tweet %>% 
+  count(mot, nom) %>% 
+  group_by(nom) %>% 
+  top_n(5, n) %>% 
+  ungroup() %>% 
+  mutate(mot = fct_reorder(mot, n, max))
+
+top_mots %>% 
+  ggplot(aes(x = mot, y = n)) +
+  geom_col(aes(fill = nom), show.legend = FALSE) +
+  facet_wrap(~nom, scales = "free") +
+  labs(x = NULL, 
+       y = NULL,
+       title = "Mots les plus utilisés dans les tweets du débat") +
+  coord_flip() 
+```
+
