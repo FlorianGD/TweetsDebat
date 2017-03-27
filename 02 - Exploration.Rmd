@@ -2,41 +2,64 @@
 title: "Débat télévisé du 20 mars 2017"
 author: "Florian Gaudin-Delrieu"
 date: "2017-03-21"
-output: html_notebook
+output: 
+  html_document:
+    keep_md : TRUE
 ---
 # Qu'ont dit les candidats lors du débat ? 
  
-Nous avons récupéré les tweets envoyés par les candidats lors du débat télévisé du 20 mars 2017. Ces tweets par les comptes officiels approximeront le transcript de leurs paroles. Je vais utiliser la librairie `tidytext` pour l'analyse du contenu des tweets.
+Nous avons récupéré les tweets envoyés par les candidats lors du débat télévisé du 20 mars 2017. Ces tweets par les comptes officiels approximeront le transcript de leurs paroles. Je vais utiliser la librairie `tidytext` pour l'analyse du contenu des tweets.  
+_Note_ : les couleurs choisies sur les graphes sont celles de leurs partis respectifs comme définies sur Wikipedia.
 
-```{r}
+```{r message = FALSE}
 library(tidytext)
 library(tidyverse)
 library(stringr)
-library(lubridate)
 library(purrr)
 library(forcats)
 library(cowplot)
 library(RColorBrewer)
-```
 
-## Récupération et traitement des données
-
-```{r}
-tweets_debat <- read_csv("tweets_debat.csv")
+tweets_debat <- read_csv("tweets_debat.csv", 
+                         col_types = cols(
+                           .default = col_character(),
+                           user_id = col_integer(),
+                           created_at = col_datetime(format = ""),
+                           status_id = col_double(),
+                           retweet_count = col_integer(),
+                           favorite_count = col_integer(),
+                           is_quote_status = col_logical(),
+                           quote_status_id = col_double(),
+                           is_retweet = col_logical(),
+                           retweet_status_id = col_double(),
+                           in_reply_to_status_status_id = col_double(),
+                           in_reply_to_status_user_id = col_integer(),
+                           media_id = col_double()
+                         ))
 tweets_debat <- tweets_debat %>% 
-  mutate(nom = factor(screen_name)) %>%
+  mutate(nom = factor(paste0("@",screen_name))) %>%
   select(-screen_name, -user_id, -status_id, -lang, -urls, -in_reply_to_status_status_id,
          -in_reply_to_status_user_id, -source, -media_id, -media_url, -media_url_expanded, -c(coordinates:bounding_box_type)) %>% 
   select(nom, everything())
-  
+
+couleurs <- c("#FF8080", "#BA55D3", "#0066CC", "#C6442E", "#C0C0C0")
 ```
 
+## Exploration rapide des tweets
+
 Qui a le plus tweeté ?
-```{r}
+```{r nb_tweets}
 ggplot(tweets_debat, aes(x = nom)) +
-  geom_bar(aes(fill = nom), show.legend = FALSE)
+  geom_bar(aes(fill = nom), show.legend = FALSE) +
+  scale_fill_manual(values = couleurs) +
+  theme_minimal() +
+  labs(title = "Marine Le Pen et Jean-Luc Mélenchon ont le plus tweeté",
+       x = NULL,
+       y = NULL)
 ```
+
 Marine Le Pen et Jean-Luc Mélenchon ont nettement plus tweeté que les autres candidats.  
+
 Y a-t-il une forte proportion de retweets ?
 ```{r}
 with(tweets_debat, tapply(is_retweet, nom, mean))
@@ -56,7 +79,7 @@ Nous allons maintenant pouvoir commencer à analyser le contenu des tweets. J'ut
 ```{r}
 tidy_tweet <- tweets_debat %>%
   select(1:3) %>% 
-  mutate(text = str_replace_all(text,                          "https://t.co/[A-Za-z\\d]+|http://[A-Za-z\\d]+|&amp;|&lt;|&gt;|RT|https", 
+  mutate(text = str_replace_all(text, "https://t.co/[A-Za-z\\d]+|http://[A-Za-z\\d]+|&amp;|&lt;|&gt;|RT|https", 
                                 "")) %>% 
   unnest_tokens(mot, text)
 ```
@@ -71,18 +94,11 @@ tidy_tweet %>%
 Ce résultat n'est pas très intéressant, on trouve les mots clés du débat (débattf1 et legranddébat), ansi que des mots très communs. Nous allons filtrer les mots les plus communs à partir de la liste de `stopwords("french")` du package `tm`. J'ai ajouté les mots "a" et "c'est", qui ne sont pas dans la liste des stopwords, mais n'apportent pas d'information.
 ```{r}
 tidy_tweet <- tidy_tweet %>% 
-  filter(!mot %in% c("débattf1","legranddébat", "legranddebat", "debattf1", "hamondebat", "a", "c'est", tm::stopwords("french")))
+  filter(!mot %in% c("débattf1","legranddébat", "legranddebat", "debattf1", "hamondébat", "hamondebat", "marine2017", "a", "c'est", tm::stopwords("french")))
 ```
 
 Faisons un graphe rapide des mots les plus employés par chaque candidat.
-```{r}
-top_mots <- tidy_tweet %>% 
-  count(mot, nom) %>% 
-  group_by(nom) %>% 
-  top_n(5, n) %>% 
-  ungroup() %>% 
-  mutate(mot = fct_reorder(mot, n, max))
-
+```{r top_mots}
 top_split <- tidy_tweet %>% 
   count(mot, nom) %>% 
   group_by(nom) %>% 
@@ -90,27 +106,90 @@ top_split <- tidy_tweet %>%
   ungroup() %>% 
   nest(-nom)  %>% 
   mutate(top_ordre = map(data, "mot")) %>% 
-  mutate(top_ordre = map(data, ~mutate(.x, mot = fct_reorder(mot, n, max))))
-  
-couleurs <- brewer.pal(5, "Set1")
+  mutate(top_ordre = map(data, ~mutate(.x, mot = fct_reorder(mot, n, max)))) %>% 
+  arrange(nom)
 
 plot_list <- map2(top_split$top_ordre, couleurs, function(x, y) {
   ggplot(x, aes(x = mot, y = n)) + 
     geom_col(fill = y, show.legend = FALSE) +
     coord_flip() +
     labs(x = NULL, y = NULL) +
+    theme_minimal() +
     theme(plot.margin = unit(c(0.6,0,0,0), "cm"))})
 
-plot_grid(plotlist = plot_list, nrow = 2, labels = paste0("@",top_split$nom), hjust = -0.2)
-
-# top_mots %>% 
-#   ggplot(aes(x = mot, y = n)) +
-#   geom_col(aes(fill = nom), show.legend = FALSE) +
-#   facet_wrap(~nom, scales = "free") +
-#   labs(x = NULL, 
-#        y = NULL,
-#        title = "Mots les plus utilisés dans les tweets du débat") +
-#   coord_flip() 
+plot_grid(plotlist = plot_list, nrow = 2, labels = top_split$nom, hjust = -0.2)
 ```
 
 Tous les candidats ont le mot "veux" dans le top 5.
+
+## Mots caractéristiques des candidats
+
+Nous allons essayer de trouver des mots caractéristiques pour chaque candidat. Pour ce faire, nous allons regarder la mesure dîte `tf-idf` pour `term frequency, inverse document frequency`. Cela revient à mettre un score élevé à un mot s'il apparaît fréquemment pour un candidat mais pas chez les autres.
+```{r mots_caracteristiques}
+mot_tfidf <- tidy_tweet %>% 
+  count(mot, nom) %>% 
+  bind_tf_idf(mot, nom, n) %>% 
+  group_by(nom) %>% 
+  top_n(5, tf_idf)
+
+mot_tfidf %>%
+  ggplot(aes(x = fct_reorder(mot, tf_idf, max), y = tf_idf)) +
+  geom_col(aes(fill = nom), show.legend = FALSE) +
+  facet_wrap(~nom, scales = "free") +
+  labs(x = NULL,
+       y = NULL,
+       title = "Mots les moins communs utilisés par chaque candidat") +
+  coord_flip() +
+  theme_minimal() +
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.line.x = element_blank(),
+        strip.text = element_text(size = 10),
+        strip.background = element_blank()) +
+  scale_fill_manual(values = couleurs)
+```
+
+Regardons les tweets qui contiennent les mots arrivant au début des graphes ci-dessus. Cela permettra de les remettre en contexte, et de voir si notre algorithme est plutôt fiable ou non.
+
+```{r}
+add_bold_color <- function(color){
+  force(color)
+  function(x){
+    str_c("<b style=\"background-color :", color, ";\">", x, "</b>")
+  }
+}
+
+liste_fun <- map(couleurs, add_bold_color)
+
+top_mots <- mot_tfidf %>% 
+  top_n(2, tf_idf) %>% 
+  select(nom, mot) %>% 
+  arrange(nom)
+
+patterns <- top_mots %>% 
+  group_by(nom) %>% 
+  summarise(pattern = str_c(mot, collapse = "|")) %>% 
+  `$`(pattern)
+
+table_tweets <- tweets_debat %>% 
+  filter(str_detect(text, str_c(patterns, collapse = "|"))) %>% 
+  select(nom, text)
+
+for(i in 1:5){
+  table_tweets$text <- str_replace_all(str_to_lower(table_tweets$text), patterns[i], liste_fun[[i]])
+}
+
+knitr::kable(table_tweets)
+```
+
+Nous voyons que quelques mots caractéristiques pour un candidat se retrouvent chez les autres (par exemple doit qui caractérise Marine Le Pen et se retrouve aussi chez Jean-Luc Mélenchon, mais nettement moins).
+Nous pouvons constater :
+
+* Benoît Hamon parle de revenu universel ;
+* Jean-Luc Mélenchon donne des chiffres ronds et parle de paix ;
+* Marine Le Pen veut des frontières et des priorités nationales et insiste sur le devoir ;
+* François Fillon parle d'école primaire et de primaire de la droite (notre algorihtme ne peut pas les distinguer), ainsi que de fondamentaux ;
+* et Emmanuel Macron parle de ce qu'il a fait et de son projet (quand il parle de projet, il est deux fois dans le même tweet).
+
+
+
