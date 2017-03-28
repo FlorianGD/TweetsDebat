@@ -19,6 +19,7 @@ library(purrr)
 library(forcats)
 library(cowplot)
 library(RColorBrewer)
+library(DT)
 
 tweets_debat <- read_csv("tweets_debat.csv", 
                          col_types = cols(
@@ -79,7 +80,8 @@ Nous allons maintenant pouvoir commencer à analyser le contenu des tweets. J'ut
 ```{r}
 tidy_tweet <- tweets_debat %>%
   select(1:3) %>% 
-  mutate(text = str_replace_all(text, "https://t.co/[A-Za-z\\d]+|http://[A-Za-z\\d]+|&amp;|&lt;|&gt;|RT|https", 
+  mutate(text = str_replace_all(text,
+                                "https://t.co/[A-Za-z\\d]+|http://[A-Za-z\\d]+|&amp;|&lt;|&gt;|RT|https",
                                 "")) %>% 
   unnest_tokens(mot, text)
 ```
@@ -117,7 +119,12 @@ plot_list <- map2(top_split$top_ordre, couleurs, function(x, y) {
     theme_minimal() +
     theme(plot.margin = unit(c(0.6,0,0,0), "cm"))})
 
-plot_grid(plotlist = plot_list, nrow = 2, labels = top_split$nom, hjust = -0.2)
+title <- ggdraw() + draw_label("Mots les plus utilisés par chaque candidat", fontface='bold')
+
+p <- plot_grid(plotlist = plot_list, nrow = 2, labels = top_split$nom,
+               label_size = 12, hjust = -0.2)
+
+plot_grid(title, p, ncol=1, rel_heights=c(0.1, 1))
 ```
 
 Tous les candidats ont le mot "veux" dans le top 5.
@@ -126,9 +133,11 @@ Tous les candidats ont le mot "veux" dans le top 5.
 
 Nous allons essayer de trouver des mots caractéristiques pour chaque candidat. Pour ce faire, nous allons regarder la mesure dîte `tf-idf` pour `term frequency, inverse document frequency`. Cela revient à mettre un score élevé à un mot s'il apparaît fréquemment pour un candidat mais pas chez les autres.
 ```{r mots_caracteristiques}
-mot_tfidf <- tidy_tweet %>% 
+mot_tfidf_tot <- tidy_tweet %>% 
   count(mot, nom) %>% 
-  bind_tf_idf(mot, nom, n) %>% 
+  bind_tf_idf(mot, nom, n)
+
+mot_tfidf <- mot_tfidf_tot %>% 
   group_by(nom) %>% 
   top_n(5, tf_idf)
 
@@ -151,7 +160,7 @@ mot_tfidf %>%
 
 Regardons les tweets qui contiennent les mots arrivant au début des graphes ci-dessus. Cela permettra de les remettre en contexte, et de voir si notre algorithme est plutôt fiable ou non.
 
-```{r}
+```{r results= "asis"}
 add_bold_color <- function(color){
   force(color)
   function(x){
@@ -162,7 +171,7 @@ add_bold_color <- function(color){
 liste_fun <- map(couleurs, add_bold_color)
 
 top_mots <- mot_tfidf %>% 
-  top_n(2, tf_idf) %>% 
+  top_n(4, tf_idf) %>% 
   select(nom, mot) %>% 
   arrange(nom)
 
@@ -171,19 +180,38 @@ patterns <- top_mots %>%
   summarise(pattern = str_c(mot, collapse = "|")) %>% 
   `$`(pattern)
 
-table_tweets <- tweets_debat %>% 
-  filter(str_detect(text, str_c(patterns, collapse = "|"))) %>% 
-  select(nom, text)
+top_score <- tidy_tweet %>% 
+  left_join(mot_tfidf_tot, by = c("nom", "mot")) %>% 
+  group_by(nom, created_at) %>% 
+  summarise(score = sum(tf_idf)) %>% 
+  top_n(n = 3, score) %>% 
+  left_join(tweets_debat, by = c("nom", "created_at")) %>% 
+  select(nom, score, text)
+
+
+# table_tweets <- tweets_debat %>% 
+#   filter(str_detect(text, str_c(patterns, collapse = "|"))) %>% 
+#   select(nom, text)
 
 for(i in 1:5){
-  table_tweets$text <- str_replace_all(str_to_lower(table_tweets$text), patterns[i], liste_fun[[i]])
+  top_score$text <- str_replace_all(str_to_lower(top_score$text), patterns[i], liste_fun[[i]])
 }
 
-knitr::kable(table_tweets)
+top_score %>% 
+  arrange(nom) %>% 
+  group_by(nom) %>% 
+  mutate(score = signif(score, 2)) %>% 
+  # tidyr::nest(-nom) %>%
+  # spread(nom, data) %>%
+  datatable(escape = FALSE, 
+            caption = htmltools::tags$caption(style = "color: black",
+              htmltools::tags$h3("Trois meilleurs scores TF-IDF des tweets de chaque candidat."), 
+              htmltools::tags$br, "Les mots caractéristiques ont été surlignés de la couleur du candidat."),
+            options = list(dom = 't', pageLength = 15))
 ```
 
-Nous voyons que quelques mots caractéristiques pour un candidat se retrouvent chez les autres (par exemple doit qui caractérise Marine Le Pen et se retrouve aussi chez Jean-Luc Mélenchon, mais nettement moins).
-Nous pouvons constater :
+Nous voyons que quelques mots caractéristiques pour un candidat se retrouvent chez les autres (par exemple sociale est plus caractéristique de Jean-Luc Mélenchon mais se retrouve aussi chez Benoît Hamon).
+Nous pouvons constater que :
 
 * Benoît Hamon parle de revenu universel ;
 * Jean-Luc Mélenchon donne des chiffres ronds et parle de paix ;
@@ -191,5 +219,5 @@ Nous pouvons constater :
 * François Fillon parle d'école primaire et de primaire de la droite (notre algorihtme ne peut pas les distinguer), ainsi que de fondamentaux ;
 * et Emmanuel Macron parle de ce qu'il a fait et de son projet (quand il parle de projet, il est deux fois dans le même tweet).
 
-
+Nous voyons aussi, si l'on classe les tweets par score, qu'Emmanuel Macron est celui qui emploie le plus ses mots caractéristique, et que François Fillon est celui qui les utilise le moins. Ce dernier a donc tweeté plus de mots utilisés aussi par les autres candidats.
 

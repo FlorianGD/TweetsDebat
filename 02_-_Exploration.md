@@ -15,6 +15,7 @@ library(purrr)
 library(forcats)
 library(cowplot)
 library(RColorBrewer)
+library(DT)
 
 tweets_debat <- read_csv("tweets_debat.csv", 
                          col_types = cols(
@@ -88,7 +89,8 @@ Nous allons maintenant pouvoir commencer à analyser le contenu des tweets. J'ut
 ```r
 tidy_tweet <- tweets_debat %>%
   select(1:3) %>% 
-  mutate(text = str_replace_all(text, "https://t.co/[A-Za-z\\d]+|http://[A-Za-z\\d]+|&amp;|&lt;|&gt;|RT|https", 
+  mutate(text = str_replace_all(text,
+                                "https://t.co/[A-Za-z\\d]+|http://[A-Za-z\\d]+|&amp;|&lt;|&gt;|RT|https",
                                 "")) %>% 
   unnest_tokens(mot, text)
 ```
@@ -148,10 +150,15 @@ plot_list <- map2(top_split$top_ordre, couleurs, function(x, y) {
     theme_minimal() +
     theme(plot.margin = unit(c(0.6,0,0,0), "cm"))})
 
-plot_grid(plotlist = plot_list, nrow = 2, labels = top_split$nom, hjust = -0.2)
+title <- ggdraw() + draw_label("Mots les plus utilisés par chaque candidat", fontface='bold')
+
+p <- plot_grid(plotlist = plot_list, nrow = 2, labels = top_split$nom,
+               label_size = 12, hjust = -0.2)
+
+plot_grid(title, p, ncol=1, rel_heights=c(0.1, 1))
 ```
 
-![](02_-_Exploration_files/figure-html/unnamed-chunk-7-1.png)<!-- -->
+![](02_-_Exploration_files/figure-html/top_mots-1.png)<!-- -->
 
 Tous les candidats ont le mot "veux" dans le top 5.
 
@@ -160,9 +167,11 @@ Tous les candidats ont le mot "veux" dans le top 5.
 Nous allons essayer de trouver des mots caractéristiques pour chaque candidat. Pour ce faire, nous allons regarder la mesure dîte `tf-idf` pour `term frequency, inverse document frequency`. Cela revient à mettre un score élevé à un mot s'il apparaît fréquemment pour un candidat mais pas chez les autres.
 
 ```r
-mot_tfidf <- tidy_tweet %>% 
+mot_tfidf_tot <- tidy_tweet %>% 
   count(mot, nom) %>% 
-  bind_tf_idf(mot, nom, n) %>% 
+  bind_tf_idf(mot, nom, n)
+
+mot_tfidf <- mot_tfidf_tot %>% 
   group_by(nom) %>% 
   top_n(5, tf_idf)
 
@@ -183,7 +192,7 @@ mot_tfidf %>%
   scale_fill_manual(values = couleurs)
 ```
 
-![](02_-_Exploration_files/figure-html/unnamed-chunk-8-1.png)<!-- -->
+![](02_-_Exploration_files/figure-html/mots_caracteristiques-1.png)<!-- -->
 
 Regardons les tweets qui contiennent les mots arrivant au début des graphes ci-dessus. Cela permettra de les remettre en contexte, et de voir si notre algorithme est plutôt fiable ou non.
 
@@ -199,7 +208,7 @@ add_bold_color <- function(color){
 liste_fun <- map(couleurs, add_bold_color)
 
 top_mots <- mot_tfidf %>% 
-  top_n(2, tf_idf) %>% 
+  top_n(4, tf_idf) %>% 
   select(nom, mot) %>% 
   arrange(nom)
 
@@ -208,79 +217,37 @@ patterns <- top_mots %>%
   summarise(pattern = str_c(mot, collapse = "|")) %>% 
   `$`(pattern)
 
-table_tweets <- tweets_debat %>% 
-  filter(str_detect(text, str_c(patterns, collapse = "|"))) %>% 
-  select(nom, text)
+top_score <- tidy_tweet %>% 
+  left_join(mot_tfidf_tot, by = c("nom", "mot")) %>% 
+  group_by(nom, created_at) %>% 
+  summarise(score = sum(tf_idf)) %>% 
+  top_n(n = 3, score) %>% 
+  left_join(tweets_debat, by = c("nom", "created_at")) %>% 
+  select(nom, score, text)
+
+
+# table_tweets <- tweets_debat %>% 
+#   filter(str_detect(text, str_c(patterns, collapse = "|"))) %>% 
+#   select(nom, text)
 
 for(i in 1:5){
-  table_tweets$text <- str_replace_all(str_to_lower(table_tweets$text), patterns[i], liste_fun[[i]])
+  top_score$text <- str_replace_all(str_to_lower(top_score$text), patterns[i], liste_fun[[i]])
 }
 
-knitr::kable(table_tweets)
+top_score %>% 
+  arrange(nom) %>% 
+  group_by(nom) %>% 
+  mutate(score = signif(score, 2)) %>% 
+  # tidyr::nest(-nom) %>%
+  # spread(nom, data) %>%
+  datatable(escape = FALSE, 
+            caption = htmltools::tags$caption(style = "color: black",
+              htmltools::tags$h3("Trois meilleurs scores TF-IDF des tweets de chaque candidat")),
+            options = list(dom = 't', pageLength = 15))
 ```
 
-
-
-nom               text                                                                                                                                                                                                                                                                       
-----------------  ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-@benoithamon      je porterai à 2% du pib les dépenses en matière de défense et d'actions inter<b style="background-color :#C0C0C0;">nationale</b>s. #hamondebat https://t.co/0qww7npxg8                                                                                                     
-@benoithamon      nous devons penser la protection sociale de demain : je propose le <b style="background-color :#ff8080;">revenu</b> <b style="background-color :#ff8080;">universel</b> qui éradiquera la précarité… https://t.co/lmko0ehenu                                               
-@benoithamon      avec le <b style="background-color :#ff8080;">revenu</b> <b style="background-color :#ff8080;">universel</b>, un agriculteur ou une assistante maternelle qui percevait 50% du smic verra son pouvoir d’achat augmenter de 397€                                            
-@benoithamon      avec le <b style="background-color :#ff8080;">revenu</b> <b style="background-color :#ff8080;">universel</b>, un jeune qui gagnait 231€ gagnera dorénavant 749€ #legranddébat                                                                                              
-@benoithamon      je veux penser la protection sociale de demain. le <b style="background-color :#ff8080;">revenu</b> <b style="background-color :#ff8080;">universel</b> éradiquera la précarité.je serai le candidat du… https://t.co/8vuuj5oi3s                                           
-@JLMelenchon      la cupidité <b style="background-color :#C0C0C0;">doit</b> céder la place à la vertu. #legranddébat #débattf1 https://t.co/uzdxeztjoi                                                                                                                                      
-@JLMelenchon      il faut punir les entreprises qui collaborent avec l'ennemi. lafarge <b style="background-color :#C0C0C0;">doit</b> être puni. #legranddébat #débattf1 https://t.co/alrsioasxx                                                                                             
-@JLMelenchon      il faut apprendre à se passer de pétrole et de gaz. le choix des énergies renouvelables, c'est le chemin de la <b style="background-color :#c6442e;">paix</b>. #legranddébat #débattf1                                                                                     
-@JLMelenchon      nous ferons une sécurité sociale intégrale qui rembourse à <b style="background-color :#c6442e;">100</b>% les dépenses de #santé. #legranddébat #débattf1… https://t.co/zmwd3hmi68                                                                                         
-@JLMelenchon      il faut une sécurité sociale intégrale qui rembourse à <b style="background-color :#c6442e;">100</b>% les dépenses de santé. #legranddébat #débattf1 https://t.co/uzdxeztjoi                                                                                               
-@JLMelenchon      le <b style="background-color :#ba55d3;">projet</b> de #macron : «moduler». pour nous, c'est clair : retraite à 60 ans à taux plein avec 40 annuités !… https://t.co/bsu1gojcko                                                                                            
-@JLMelenchon      il faut augmenter le smic. il est à peine <b style="background-color :#c6442e;">100</b> euros au dessus du seuil de pauvreté. #legranddébat #débattf1… https://t.co/fv0jyfboec                                                                                             
-@JLMelenchon      ma politique est celle de la demande : un plan de <b style="background-color :#c6442e;">100</b> milliards d'euros d'investissements. #legranddébat #débattf1 https://t.co/u3xg1p6sdu                                                                                       
-@JLMelenchon      le grand carénage pour continuer le #nucléaire, c'est <b style="background-color :#c6442e;">100</b> milliards. nous proposons 50 milliards pour la transition… https://t.co/oyse0eres2                                                                                     
-@JLMelenchon      la laïcité ne <b style="background-color :#C0C0C0;">doit</b> pas être un prétexte pour flétrir une religion. et pour dire les choses clairement : la religion musulmane. #legranddébat                                                                                     
-@JLMelenchon      il faut en finir avec l'escalade. il faut revenir au rôle de gardien de la <b style="background-color :#c6442e;">paix</b>. de la <b style="background-color :#c6442e;">paix</b>. #legranddébat #débattf1 https://t.co/uzdxeztjoi                                           
-@JLMelenchon      vous vous trompez si vous croyez que l'apprentissage <b style="background-color :#C0C0C0;">doit</b> être la voie royale de l'enseignement professionnel. #legranddébat #débattf1                                                                                           
-@JLMelenchon      je serai le président de la <b style="background-color :#c6442e;">paix</b> car je m'inquiète de voir monter la guerre. nous sortirons de l'#otan. #legranddébat #débattf1                                                                                                  
-@JLMelenchon      je serai le président écologiste : sortie du nucléaire, <b style="background-color :#c6442e;">100</b>% renouvelables, <b style="background-color :#c6442e;">100</b>% d'agriculture bio. #legranddébat #débattf1                                                            
-@EmmanuelMacron   ce <b style="background-color :#ba55d3;">projet</b>, je veux le porter avec vous. l’alternance profonde, c’est notre <b style="background-color :#ba55d3;">projet</b> ! #legranddébat                                                                                      
-@EmmanuelMacron   mon <b style="background-color :#ba55d3;">projet</b> est un <b style="background-color :#ba55d3;">projet</b> qui protège celles et ceux qui n’y arrivent pas, qui libère celles et ceux qui veulent entreprendre. #legranddébat                                            
-@EmmanuelMacron   le <b style="background-color :#ba55d3;">projet</b> que je porte est un <b style="background-color :#ba55d3;">projet</b> qui a confiance dans le pays et son énergie. 
-c’est un <b style="background-color :#ba55d3;">projet</b> porteur d’espoir… https://t.co/smohzlwsyq 
-@EmmanuelMacron   <b style="background-color :#ba55d3;">j’ai</b> été ministre et <b style="background-color :#ba55d3;">j’ai</b> vu ce qui bloquait notre pays. des règles hors d’âge, des fonctionnements dépassés. #legranddébat                                                            
-@EmmanuelMacron   rien n’était écrit en ce qui me concerne. je suis là parce que <b style="background-color :#ba55d3;">j’ai</b> travaillé, parce que je l’ai voulu. #legranddébat                                                                                                            
-@MLP_officiel     "on <b style="background-color :#C0C0C0;">doit</b> expulser les étrangers islamistes fichés s !" #débattf1 #legranddébat #marine2017 #aunomdupeuple https://t.co/eisgk8bww8                                                                                                
-@MLP_officiel     "il faut mener la guerre contre le fondamentalisme islamiste, et on <b style="background-color :#C0C0C0;">doit</b> s'en donner les moyens." #débattf1 #legranddébat                                                                                                        
-@MLP_officiel     "les fondamentalistes islamistes se sont infiltrés dans les associations : on <b style="background-color :#C0C0C0;">doit</b> aller les chercher." #débattf1 #legranddébat                                                                                                  
-@MLP_officiel     "on <b style="background-color :#C0C0C0;">doit</b> faire la liste des organisations islamistes qui menacent la france : cette liste n'est même pas faite !" #débattf1 #legranddébat                                                                                        
-@MLP_officiel     "on <b style="background-color :#C0C0C0;">doit</b> expulser les étrangers islamistes fichés s !" #débattf1 #legranddébat                                                                                                                                                   
-@MLP_officiel     "le fondamentalisme islamiste ne <b style="background-color :#C0C0C0;">doit</b> plus avoir le droit de cité dans notre pays." #débattf1 #legranddébat                                                                                                                      
-@MLP_officiel     "on <b style="background-color :#C0C0C0;">doit</b> retrouver la maîtrise de nos frontières pour savoir qui entre ou pas sur notre territoire." #débattf1 #legranddébat                                                                                                     
-@MLP_officiel     "on <b style="background-color :#C0C0C0;">doit</b> aller vers 2% du pib pour le budget de la défense <b style="background-color :#C0C0C0;">nationale</b>, dès 2018." #débattf1 #legranddébat #marine2017 https://t.co/vhhg5rt3qa                                           
-@MLP_officiel     "on <b style="background-color :#C0C0C0;">doit</b> aller vers 2% du pib pour le budget de la défense <b style="background-color :#C0C0C0;">nationale</b>, dès 2018. l'armée est aujourd'hui à l'os !" #débattf1 #legranddébat                                              
-@MLP_officiel     "la france <b style="background-color :#C0C0C0;">doit</b> décider et personne ne <b style="background-color :#C0C0C0;">doit</b> décider à sa place, je suis attachée à la liberté des français." #débattf1 #legranddébat                                                   
-@MLP_officiel     "#fillon a abandonné son <b style="background-color :#ba55d3;">projet</b> de privatiser la sécurité sociale ? il a vu que les français n'en veulent pas." #débattf1 #legranddébat                                                                                          
-@MLP_officiel     "les candidats #fillon et #macron se bagarrent pour plus de dérégulation, pour une loi el khomri puissance <b style="background-color :#c6442e;">100</b>0." #débattf1 #legranddébat                                                                                        
-@MLP_officiel     "on <b style="background-color :#C0C0C0;">doit</b> baisser le nombre de députés et de sénateurs, à respectivement 300 et 200." #débattf1 #legranddébat                                                                                                                     
-@MLP_officiel     "je propose un référendum pour intégrer la priorité <b style="background-color :#C0C0C0;">nationale</b> et la proportionnelle intégrale dans la constitution" #débattf1 #legranddébat                                                                                      
-@MLP_officiel     "nous devons retrouver nos frontières <b style="background-color :#C0C0C0;">nationale</b>s, et arrêter l'#immigration : les français n'en peuvent plus."… https://t.co/0hegfe0qm8                                                                                          
-@MLP_officiel     "il y a une montée du fondamentalisme islamiste dans notre pays, et on <b style="background-color :#C0C0C0;">doit</b> le dire." #débattf1 #legranddébat                                                                                                                    
-@MLP_officiel     "on <b style="background-color :#C0C0C0;">doit</b> mettre fin à la dissémination des #migrants dans les villages, faite sans l'avis des français." #débattf1 #legranddébat                                                                                                 
-@MLP_officiel     "nous devons retrouver nos frontières <b style="background-color :#C0C0C0;">nationale</b>s, et arrêter l'immigration dont les français ne peuvent plus." #débattf1 #legranddébat                                                                                           
-@MLP_officiel     "les frontières <b style="background-color :#C0C0C0;">nationale</b>s ne sont pas, comme vous le dites m. #fillon, "un leurre" !" #débattf1 #legranddébat                                                                                                                   
-@MLP_officiel     "il faut avoir des frontières <b style="background-color :#C0C0C0;">nationale</b>s. on ne pourra pas compter sur la grèce submergée pour gérer l'immigration." #débattf1 #legranddébat                                                                                     
-@MLP_officiel     "l'indépendance <b style="background-color :#C0C0C0;">nationale</b>, c'est le droit pour les français de décider pour eux-mêmes." #débattf1 #legranddébat… https://t.co/kcuslvufk2                                                                                         
-@MLP_officiel     "l'ecole est le creuset qui fabrique des français, elle ne <b style="background-color :#C0C0C0;">doit</b> pas renvoyer vers des "cultures d'origine"." #débattf1 #legranddébat                                                                                             
-@MLP_officiel     "plus aucune décision ne <b style="background-color :#C0C0C0;">doit</b> être prise contre le peuple français." #débattf1 #legranddébat                                                                                                                                     
-@MLP_officiel     "il s'agit pour les français de défendre leurs intérêts, pas ceux des banques, pas ceux des multi<b style="background-color :#C0C0C0;">nationale</b>s." #débattf1 #legranddébat                                                                                            
-@MLP_officiel     "nous devons défendre notre identité <b style="background-color :#C0C0C0;">nationale</b>, nos valeurs, nos traditions." #débattf1 #legranddébat                                                                                                                            
-@MLP_officiel     "l'indépendance <b style="background-color :#C0C0C0;">nationale</b>, c'est le droit pour les français de décider pour eux-mêmes." #débattf1 #legranddébat                                                                                                                  
-@MLP_officiel     "je veux être le garant de l'indépendance <b style="background-color :#C0C0C0;">nationale</b>, conformément à l'article 5 de la constitution." #débattf1 #legranddébat                                                                                                     
-@FrancoisFillon   un mouvement totalitaire déstabilise une partie du monde. il <b style="background-color :#C0C0C0;">doit</b> être combattu par une alliance avec les forces sur place, russie et iran.                                                                                      
-@FrancoisFillon   #immigration la situation économique et sociale de notre pays <b style="background-color :#C0C0C0;">doit</b> nous conduire à limiter le plus possible les ent… https://t.co/jefgytzwxl                                                                                     
-@FrancoisFillon   je veux une école <b style="background-color :#0066cc;">primaire</b> qui commence à 5 ans, où 75% du temps des élèves est consacré à l'apprentissage des <b style="background-color :#0066cc;">fondamentaux</b>. #legranddébat                                             
-@FrancoisFillon   ma priorité absolue, c'est une école <b style="background-color :#0066cc;">primaire</b> qui enseigne les savoirs <b style="background-color :#0066cc;">fondamentaux</b>. #legranddébat https://t.co/mwmj0stvfj                                                             
-@FrancoisFillon   il y a chaque année près de 150.000 orphelins de la république, qui sortent de notre système scolaire en ne maîtrisant pas les <b style="background-color :#0066cc;">fondamentaux</b>.                                                                                     
-@FrancoisFillon   nous sommes 11 candidats, 5 sont ici. avec cette règle des sondages, je n'aurais pas pu participer aux débats de la <b style="background-color :#0066cc;">primaire</b>. #legranddébat                                                                                      
+<!--html_preserve--><div id="htmlwidget-0242d737d9fc05714ad1" style="width:100%;height:auto;" class="datatables html-widget"></div>
+<script type="application/json" data-for="htmlwidget-0242d737d9fc05714ad1">{"x":{"filter":"none","caption":"<caption style=\"color: black\">\n  <h3>Trois meilleurs scores TF-IDF des tweets de chaque candidat<\/h3>\n<\/caption>","data":[["1","2","3","4","5","6","7","8","9","10","11","12","13","14","15"],["@benoithamon","@benoithamon","@benoithamon","@EmmanuelMacron","@EmmanuelMacron","@EmmanuelMacron","@FrancoisFillon","@FrancoisFillon","@FrancoisFillon","@JLMelenchon","@JLMelenchon","@JLMelenchon","@MLP_officiel","@MLP_officiel","@MLP_officiel"],[0.065,0.065,0.064,0.08,0.085,0.091,0.044,0.043,0.048,0.055,0.047,0.037,0.05,0.056,0.05],["je veux penser la protection <b style=\"background-color :#c6442e;\">social<\/b>e de demain. le <b style=\"background-color :#ff8080;\">revenu<\/b> <b style=\"background-color :#ff8080;\">universel<\/b> éradiquera la précarité.je serai le candidat du… https://t.co/8vuuj5oi3s","avec le <b style=\"background-color :#ff8080;\">revenu<\/b> <b style=\"background-color :#ff8080;\">universel<\/b>, un agriculteur ou une assistante maternelle qui percevait 50% du smic verra son pouvoir d’achat augmenter de 397€","nous devons penser la protection <b style=\"background-color :#c6442e;\">social<\/b>e de demain : je propose le <b style=\"background-color :#ff8080;\">revenu<\/b> <b style=\"background-color :#ff8080;\">universel<\/b> qui éradiquera la précarité… https://t.co/lmko0ehenu","le <b style=\"background-color :#ba55d3;\">projet<\/b> que je <b style=\"background-color :#ba55d3;\">porte<\/b> est un <b style=\"background-color :#ba55d3;\">projet<\/b> qui a confiance dans le pays et son énergie. \nc’est un <b style=\"background-color :#ba55d3;\">projet<\/b> <b style=\"background-color :#ba55d3;\">porte<\/b>ur d’espoir… https://t.co/smohzlwsyq","je veux que là où 50 à 60% des élèves ne <b style=\"background-color :#ba55d3;\">savent<\/b> pas <b style=\"background-color :#ba55d3;\">lire<\/b>, <b style=\"background-color :#ba55d3;\">écrire<\/b> et compter en <b style=\"background-color :#ba55d3;\">cm2<\/b>, on <b style=\"background-color :#ba55d3;\">porte<\/b> leur nombre à 12 par c… https://t.co/vicq7a2kho","mon <b style=\"background-color :#ba55d3;\">projet<\/b> est un <b style=\"background-color :#ba55d3;\">projet<\/b> qui <b style=\"background-color :#ba55d3;\">protège<\/b> <b style=\"background-color :#ba55d3;\">celles<\/b> et ceux qui n’y arrivent pas, qui libère <b style=\"background-color :#ba55d3;\">celles<\/b> et ceux qui veulent entreprendre. #legranddébat","je veux une <b style=\"background-color :#0066cc;\">école<\/b> <b style=\"background-color :#0066cc;\">primaire<\/b> qui commence à 5 ans, où 75% du temps des élèves est consacré à l'apprentissage des <b style=\"background-color :#0066cc;\">fondamentaux<\/b>. #legranddébat","je mets en garde les français contre l'illusion d'une retraite par points, qui est une manière de baisser chaque année la valeur du point.","je suis le seul qui pourra demain <b style=\"background-color :#0066cc;\">disposer<\/b> d'une majorité cohérente et stable pour <b style=\"background-color :#0066cc;\">conduire<\/b> le <b style=\"background-color :#0066cc;\">redressement<\/b> de notre pays.","je serai le président écologiste : sortie du nucléaire, <b style=\"background-color :#c6442e;\">100<\/b>% renouvelables, <b style=\"background-color :#c6442e;\">100<\/b>% d'agriculture bio. #legranddébat #débattf1","le grand carénage pour continuer le #nucléaire, c'est <b style=\"background-color :#c6442e;\">100<\/b> milliards. nous proposons 50 milliards pour la transition… https://t.co/oyse0eres2","il faut apprendre à se passer de <b style=\"background-color :#c6442e;\">pétrole<\/b> et de <b style=\"background-color :#c6442e;\">gaz<\/b>. le choix des énergies renouvelables, c'est le chemin de la <b style=\"background-color :#c6442e;\">paix<\/b>. #legranddébat #débattf1","\"la france <b style=\"background-color :#C0C0C0;\">doit<\/b> <b style=\"background-color :#C0C0C0;\">décider<\/b> et personne ne <b style=\"background-color :#C0C0C0;\">doit<\/b> <b style=\"background-color :#C0C0C0;\">décider<\/b> à sa place, je suis attachée à la liberté des français.\" #débattf1 #legranddébat","\"on <b style=\"background-color :#C0C0C0;\">doit<\/b> aller vers 2% du pib pour le budget de la défense <b style=\"background-color :#C0C0C0;\">nationale<\/b>, dès 2018. l'armée est aujourd'hui à l'os !\" #débattf1 #legranddébat","\"on <b style=\"background-color :#C0C0C0;\">doit<\/b> aller vers 2% du pib pour le budget de la défense <b style=\"background-color :#C0C0C0;\">nationale<\/b>, dès 2018.\" #débattf1 #legranddébat #marine2017 https://t.co/vhhg5rt3qa"]],"container":"<table class=\"display\">\n  <thead>\n    <tr>\n      <th> <\/th>\n      <th>nom<\/th>\n      <th>score<\/th>\n      <th>text<\/th>\n    <\/tr>\n  <\/thead>\n<\/table>","options":{"dom":"t","pageLength":15,"columnDefs":[{"className":"dt-right","targets":2},{"orderable":false,"targets":0}],"order":[],"autoWidth":false,"orderClasses":false,"lengthMenu":[10,15,25,50,100]}},"evals":[],"jsHooks":[]}</script><!--/html_preserve-->
 
 Nous voyons que quelques mots caractéristiques pour un candidat se retrouvent chez les autres (par exemple doit qui caractérise Marine Le Pen et se retrouve aussi chez Jean-Luc Mélenchon, mais nettement moins).
 Nous pouvons constater :
