@@ -6,21 +6,26 @@ output:
   html_document:
     keep_md : TRUE
 ---
-# Qu'ont dit les candidats lors du débat ? 
+# Qu'ont tweeté les candidats lors du débat ? 
  
-Nous avons récupéré les tweets envoyés par les candidats lors du débat télévisé du 20 mars 2017. Ces tweets par les comptes officiels approximeront le transcript de leurs paroles. Je vais utiliser la librairie `tidytext` pour l'analyse du contenu des tweets.  
-_Note_ : les couleurs choisies sur les graphes sont celles de leurs partis respectifs comme définies sur Wikipedia.
+Nous avons récupéré les tweets envoyés par les candidats lors du débat télévisé du 20 mars 2017 (le processus est décrit [sur github](https://github.com/ptiflus/TweetsDebat/blob/master/01_-_Donne%CC%81es.md). Ces tweets par les comptes officiels approximeront le transcript de leurs paroles. Je vais utiliser la librairie `tidytext` pour l'analyse du contenu des tweets.  
+
+Voici les librairies dont nous aurons besoin. Le package `cowplot` servira pour combiner plusieurs graphiques.
 
 ```{r message = FALSE}
 library(tidytext)
 library(tidyverse)
 library(stringr)
-library(purrr)
 library(forcats)
-library(cowplot)
-library(RColorBrewer)
 library(DT)
+library(cowplot)
+```
 
+Lisons maintenant les données. Nous allons modifier le nom des candidats pour ajouter le "@" avant leur nom d'utilisateur twitter, sélectionner les colonnes `nom`, `created_at` (qui donne le moment d'envoi du tweet et servira à identifier les tweets plus loin), `text` (qui contient le texte du tweet) ainsi que d'autres colonnes donnant des méta informations sur les tweets.
+
+Nous définissons aussi les couleurs à partir des couleurs des partis telles que définies sur Wikipedia, et qui nous serviront pour les graphiques.
+
+```{r}
 tweets_debat <- read_csv("tweets_debat.csv", 
                          col_types = cols(
                            .default = col_character(),
@@ -36,8 +41,7 @@ tweets_debat <- read_csv("tweets_debat.csv",
                            in_reply_to_status_status_id = col_double(),
                            in_reply_to_status_user_id = col_integer(),
                            media_id = col_double()
-                         ))
-tweets_debat <- tweets_debat %>% 
+                         )) %>% 
   mutate(nom = factor(paste0("@",screen_name))) %>%
   select(-screen_name, -user_id, -status_id, -lang, -urls, -in_reply_to_status_status_id,
          -in_reply_to_status_user_id, -source, -media_id, -media_url, -media_url_expanded, -c(coordinates:bounding_box_type)) %>% 
@@ -48,7 +52,8 @@ couleurs <- c("#FF8080", "#BA55D3", "#0066CC", "#C6442E", "#C0C0C0")
 
 ## Exploration rapide des tweets
 
-Qui a le plus tweeté ?
+Qui a le plus tweeté ?  
+Faisons un histogramme pour le voir.
 ```{r nb_tweets}
 ggplot(tweets_debat, aes(x = nom)) +
   geom_bar(aes(fill = nom), show.legend = FALSE) +
@@ -66,7 +71,8 @@ Y a-t-il une forte proportion de retweets ?
 with(tweets_debat, tapply(is_retweet, nom, mean))
 ```
 
-Pour Jean-Luc Mélenchon, environ 16% des tweets envoyés pendant le débat sont des retweets, aucun pour les autres candidats. Nous allons filtrer les retweets, vu qu'ils ne représentent pas ce qu'a dit le candidat pendant le débat. Les colonnes `is_quote_status`, `quote_status_id` et `retweet_status_id` peuvent aussi être filtrées, vu qu'elles n'apportent aucune information.
+Pour Jean-Luc Mélenchon, environ 16% des tweets envoyés pendant le débat sont des retweets, aucun pour les autres candidats. Nous allons filtrer les retweets, vu qu'ils ne représentent pas ce qu'a dit le candidat pendant le débat. Les colonnes `is_quote_status`, `quote_status_id`, `is_retweet` et `retweet_status_id` peuvent être filtrées, vu qu'elles n'apportent aucune information.
+
 ```{r}
 tweets_debat <- tweets_debat %>% 
   filter(!is_retweet) %>% 
@@ -75,7 +81,8 @@ tweets_debat <- tweets_debat %>%
 
 ## Utilisation de `tidytext`
 
-Nous allons maintenant pouvoir commencer à analyser le contenu des tweets. J'utilise ici une expression conseillée sur le site [tidy text mining](http://tidytextmining.com/twitter.html#word-frequencies-1). Cela enlève les liens, mais conserve les hashtags et les mentions.
+Nous allons maintenant pouvoir commencer à analyser le contenu des tweets. J'utilise ici une expression conseillée sur le site [tidy text mining](http://tidytextmining.com/twitter.html#word-frequencies-1). Cela enlève les liens, mais conserve les hashtags et les mentions.  
+Nous utilisons ensuite la fonction `unnest_tokens` qui va générer un data frame avec une ligne par mot, par nom et par created_at (identifiant du tweet).
 
 ```{r}
 tidy_tweet <- tweets_debat %>%
@@ -86,7 +93,8 @@ tidy_tweet <- tweets_debat %>%
   unnest_tokens(mot, text)
 ```
 
-Quels sont les mots les plus employés par chaque candidat ?
+Quels sont les mots les plus employés par chaque candidat ?  
+Nous pouvons compter les mots pour chaque candidat avec `dplyr::count`.
 ```{r}
 tidy_tweet %>% 
   group_by(nom) %>% 
@@ -99,7 +107,33 @@ tidy_tweet <- tidy_tweet %>%
   filter(!mot %in% c("débattf1","legranddébat", "legranddebat", "debattf1", "hamondébat", "hamondebat", "marine2017", "a", "c'est", tm::stopwords("french")))
 ```
 
-Faisons un graphe rapide des mots les plus employés par chaque candidat.
+Faisons un graphe des mots les plus employés par chaque candidat.  
+Le problème que j'ai rencontré est que certains mots sont employés par plusieurs candidats, mais pas dans le même ordre. Pour avoir dse graphes plus clairs, je pense qu'il faut que pour chaque candidat les mots soient dans le bon ordre. Or, pour classer les mots il faut transformer la colonne en `factor` (en utilisant `forcats::fct_reorder` qui permet de classer un factor en fonction d'une autre colonne), et on ne peut pas utiliser `ggplot2::facet_wrap`. Voici ce qui se passe si on utilise `facet_wrap`.
+
+```{r test_facet}
+tidy_tweet %>% 
+  count(mot, nom) %>% 
+  group_by(nom) %>% 
+  top_n(5, n) %>% 
+  ungroup() %>% 
+  mutate(mot = fct_reorder(mot, n, max)) %>% 
+  ggplot(aes(x = mot, y = n, fill = nom)) +
+  geom_col(show.legend = FALSE) + 
+  facet_wrap(~nom, scales = "free") +
+  coord_flip() +
+  theme_minimal() +
+  scale_fill_manual(values = couleurs)
+```
+
+Cela marche pour Marine Le Pen et Jean-Luc Mélenchon (presque) car ils ont le plus de tweets et qu'il y a donc plus de variabilité dans la distribution des noms, mais pas du tout pour les autres. Il y a beaucoup de mots ayant le même compte, ce qui explique que le top 5 pour chaque candidat donne plus que 5 résultats parfois.  
+
+Pour résoudre ce problème, je vais créer un graphe par candidat et les combiner ensuite. Pour créer chaque graphe, j'utilise `tidyr::nest(-nom)` qui va créer une colonne `data` avec un data frame pour chaque candidat. Ensuite, grâce à la fonction `purrr::map` et de `dplyr::mutate`, je peux réorganiser chaque mot en fonction des données du seul candidat.  
+
+Je crée ensuite une fonction personnalisée pour créer les graphiques à partir de 2 entrées : une correspondant aux données, et l'autre aux couleurs.
+Puis nous faisons une liste de graphiques en utilisant la fonction `purrr::map2`, qui me permet de parcourir chacun des jeux de données des candidats (ils sont dans `top_split$top_ordre`), et les couleurs de chaque candidat (dans le vecteur `couleurs`) et d'utiliser notre fonction `creer_graphe_couleur`.  
+
+Les graphiques sont combinés grâce à `cowplot::plot_grid`. Je définis un autre graphe pour le titre avant d'afficher le graphe.
+
 ```{r top_mots}
 top_split <- tidy_tweet %>% 
   count(mot, nom) %>% 
@@ -107,17 +141,18 @@ top_split <- tidy_tweet %>%
   top_n(5, n) %>% 
   ungroup() %>% 
   nest(-nom)  %>% 
-  mutate(top_ordre = map(data, "mot")) %>% 
   mutate(top_ordre = map(data, ~mutate(.x, mot = fct_reorder(mot, n, max)))) %>% 
   arrange(nom)
 
-plot_list <- map2(top_split$top_ordre, couleurs, function(x, y) {
+creer_graphe_couleur <- function(x, y) {
   ggplot(x, aes(x = mot, y = n)) + 
     geom_col(fill = y, show.legend = FALSE) +
     coord_flip() +
     labs(x = NULL, y = NULL) +
     theme_minimal() +
-    theme(plot.margin = unit(c(0.6,0,0,0), "cm"))})
+    theme(plot.margin = unit(c(0.6,0,0,0), "cm"))}
+
+plot_list <- map2(top_split$top_ordre, couleurs,  creer_graphe_couleur)
 
 title <- ggdraw() + draw_label("Mots les plus utilisés par chaque candidat", fontface='bold')
 
@@ -127,11 +162,13 @@ p <- plot_grid(plotlist = plot_list, nrow = 2, labels = top_split$nom,
 plot_grid(title, p, ncol=1, rel_heights=c(0.1, 1))
 ```
 
-Tous les candidats ont le mot "veux" dans le top 5.
+Voilà qui me semble mieux ! Nous pouvons constater que tous les candidats ont le mot "veux" dans leur top 5 des mots les plus utilisés.
 
 ## Mots caractéristiques des candidats
 
-Nous allons essayer de trouver des mots caractéristiques pour chaque candidat. Pour ce faire, nous allons regarder la mesure dîte `tf-idf` pour `term frequency, inverse document frequency`. Cela revient à mettre un score élevé à un mot s'il apparaît fréquemment pour un candidat mais pas chez les autres.
+Nous allons essayer de trouver des mots caractéristiques pour chaque candidat. Pour ce faire, nous allons regarder la mesure dîte `tf-idf` pour `term frequency, inverse document frequency`. Cela revient à mettre un score élevé à un mot s'il apparaît fréquemment pour un candidat mais pas chez les autres.  
+Pour cela nous pouvons utiliser la fonction `bind_tf_idf` du package `tidytext`. Il suffit de lui donner la colonne des mots à calculer, les groupes (ici par candidat) et le nombre de mot par groupe. À noter que comme nous choisissons des mots caractéristiques pour chaque candidat, il n'y a plus le problème vu plus haut, on peut utiliser directement `facet_wrap`.
+
 ```{r mots_caracteristiques}
 mot_tfidf_tot <- tidy_tweet %>% 
   count(mot, nom) %>% 
@@ -159,50 +196,54 @@ mot_tfidf %>%
 ```
 
 Regardons les tweets qui contiennent les mots arrivant au début des graphes ci-dessus. Cela permettra de les remettre en contexte, et de voir si notre algorithme est plutôt fiable ou non.
+Je vais regarder les 3 tweets de chaque candidat ayant le plus grand score de TF-IDF, en sommant le score TF-IDF pour chaque mot du tweet.
 
-```{r results= "asis"}
-add_bold_color <- function(color){
-  force(color)
-  function(x){
-    str_c("<b style=\"background-color :", color, ";\">", x, "</b>")
-  }
-}
 
-liste_fun <- map(couleurs, add_bold_color)
-
-top_mots <- mot_tfidf %>% 
-  top_n(4, tf_idf) %>% 
-  select(nom, mot) %>% 
-  arrange(nom)
-
-patterns <- top_mots %>% 
-  group_by(nom) %>% 
-  summarise(pattern = str_c(mot, collapse = "|")) %>% 
-  `$`(pattern)
-
+```{r}
 top_score <- tidy_tweet %>% 
   left_join(mot_tfidf_tot, by = c("nom", "mot")) %>% 
   group_by(nom, created_at) %>% 
   summarise(score = sum(tf_idf)) %>% 
   top_n(n = 3, score) %>% 
   left_join(tweets_debat, by = c("nom", "created_at")) %>% 
-  select(nom, score, text)
+  select(text, score, nom) %>% 
+  mutate(score = signif(score, 2))
 
+datatable(top_score)
+```
 
-# table_tweets <- tweets_debat %>% 
-#   filter(str_detect(text, str_c(patterns, collapse = "|"))) %>% 
-#   select(nom, text)
+Le résultat n'est pas très visible, je vais surligner les mots que nous avons trouvé dans les mots caractéristiques pour voir leur répartition. Le vecteur `patterns` créé ci-dessous donne pour chaque candidat leurs mots caractéristiques concaténés avec `|` pour chaque terme soit trouvé indépendemment ensuite.  
+Pour remplacer chaque mot par le mot mis en forme (en html), je vais utiliser `stringr::str_replace_all` en utilisant `patterns` créé précédemment, et avec une fonction personnalisée. Comme on ne peut pas donner d'argument à cette fonction dans `str_replace_all` directement, je vais donc créer une liste de fonction, à partir d'une "closure" (i.e. une "usine à fonction"). Ensuite, grâce à `map`, je peux avoir une liste de fonction, permettant de changer la couleur d'un mot. Il faut enfin une boucle `for` pour modifier successivement le champ `text`. A noter aussi que j'utilse `str_to_lower`, vu que les mots sont en bas de casse dans `patterns` et que la recherche dans `str_replace_all` est sensible à la casse.
+
+```{r}
+patterns <- mot_tfidf %>% 
+  top_n(4, tf_idf) %>% 
+  select(nom, mot) %>% 
+  arrange(nom) %>% 
+  group_by(nom) %>% 
+  summarise(pattern = str_c(mot, collapse = "|")) %>% 
+  `$`(pattern)
+
+add_bold_color <- function(color){
+  force(color)
+  function(x){
+    str_c("<b style=\"color :", color, ";\">", x, "</b>")
+  }
+}
+
+liste_fun <- map(couleurs, add_bold_color)
 
 for(i in 1:5){
   top_score$text <- str_replace_all(str_to_lower(top_score$text), patterns[i], liste_fun[[i]])
 }
+```
 
+Nous pouvons maintenant voir la table avec les couleurs.
+
+```{r}
 top_score %>% 
   arrange(nom) %>% 
   group_by(nom) %>% 
-  mutate(score = signif(score, 2)) %>% 
-  # tidyr::nest(-nom) %>%
-  # spread(nom, data) %>%
   datatable(escape = FALSE, 
             caption = htmltools::tags$caption(style = "color: black",
               htmltools::tags$h3("Trois meilleurs scores TF-IDF des tweets de chaque candidat."), 
@@ -210,6 +251,8 @@ top_score %>%
             options = list(dom = 't', pageLength = 15))
 ```
 
+   
+   
 Nous voyons que quelques mots caractéristiques pour un candidat se retrouvent chez les autres (par exemple sociale est plus caractéristique de Jean-Luc Mélenchon mais se retrouve aussi chez Benoît Hamon).
 Nous pouvons constater que :
 
