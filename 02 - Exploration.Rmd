@@ -206,7 +206,7 @@ top_score %>%
   datatable(escape = FALSE, 
             caption = htmltools::tags$caption(style = "color: black",
               htmltools::tags$h3("Trois meilleurs scores TF-IDF des tweets de chaque candidat."), 
-              htmltools::tags$br, "Les mots caractéristiques ont été surlignés de la couleur du candidat."),
+              "Les mots caractéristiques ont été surlignés de la couleur du candidat."),
             options = list(dom = 't', pageLength = 15))
 ```
 
