@@ -85,16 +85,21 @@ Nous allons regarder dans un premier temps les méta-données : combien de tweet
 
 ```{r nb_tweets}
 nb_tweets <- tweets_debat %>% 
+  group_by(is_retweet) %>% 
   count(nom) %>% 
-  mutate(nom = fct_reorder(nom, n, identity))
+  ungroup() %>% 
+  mutate(nom = fct_reorder(nom, n, max),
+         is_retweet = factor(is_retweet, levels = c("FALSE", "TRUE"), labels = c("Tweet du candidat", "Retweet")))
 
 ggplot(nb_tweets, aes(x = nom, y = n)) +
-  geom_col(aes(fill = nom ), show.legend = FALSE) +
-  # scale_fill_manual(values = couleurs) +
+  geom_col(aes(fill = is_retweet), show.legend = FALSE) +
+  facet_wrap(~is_retweet) +
   theme_minimal() +
   coord_flip() +
-  labs(title = "Jean-Luc Mélenchon a 2 fois plus tweeté",
+  labs(title = "Jean-Luc Mélenchon a le plus tweeté (et retweeté)",
        x = NULL,
-       y = NULL)
+       y = NULL) +
+  theme(legend.position = "top")
+
 ```
 
