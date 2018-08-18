@@ -1,21 +1,15 @@
----
-title: "Tweets du débat du 4 avril"
-author: "Florian Gaudin-Delrieu"
-date: "5 avril 2017"
-output: 
-  html_document:
-    keep_md: TRUE
----
+# Tweets du débat du 4 avril
+Florian Gaudin-Delrieu  
+5 avril 2017  
 
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
-```
+
 
 ## Objectif
 
 Je vais réutiliser le code du débat précédent pour faire une analyse plsu rapide des tweets des candidats. Je vais en profiter aussi pour automatiser certaines étapes en les incluant dans des fonctions.
 
-```{r libraries, message = FALSE}
+
+```r
 library(rtweet)
 library(tidyverse)
 library(stringr)
@@ -32,7 +26,8 @@ Il faut récupérer la liste des tweets des 11 partipants au débat. Il faut aus
 J'ai automatisé la récupération dans une fonction `recuperer_tweets()`, qui prend comme arguments un vecteur avec les noms des comptes twitters des candidats à récupérer (sans le @), et les heures, sous forme d'intervalle (`lubridate::interval`), ainsi qu'un argument facultatif pour le nombre de tweets à récupérer (cela pourra servir si la recherche est relancée plus tard, la fonction `get_timeline()` récupérant les tweets à partir des derniers postés).  
 A noter que j'ai gardé les retweets, sinon Nathalie Arthaud n'aurait eu aucun tweet pendant le débat. Pour pouvoir les analyser, je récupère aussi le nom de la personne retweetée.
 
-```{r fonction_pour_recuperer_les_tweets}
+
+```r
 heures_debat <- interval(ymd_hm("20170404_1800"), 
                          ymd_hm("20170405_0200"))
 
@@ -59,12 +54,12 @@ recuperer_tweets <- function(candidats, heures, n = 200) {
            nom = as.factor(nom),
            rt_nom = if_else(is_retweet, str_extract(rt_nom,"\\w+"), NA_character_))
 }
-
 ```
 
 Nous pouvons maintenant récupérer les tweets. Je vais sauvegarder les données dans un csv pour que cela soit plus simple de refaire l'analyse plus tard.
 
-```{r recuperation_et_ecriture}
+
+```r
 # tweets_debats <- recuperer_tweets(candidats, heures_debat)
 # write_csv(tweets_debats, "tweets_debat_20170404.csv")
 tweets_debat <- read_csv("tweets_debat_20170404.csv",
@@ -83,7 +78,8 @@ Nous allons regarder dans un premier temps les méta-données : combien de tweet
 
 ### Combien de tweets par candidats ?
 
-```{r nb_tweets}
+
+```r
 nb_tweets <- tweets_debat %>% 
   group_by(is_retweet) %>% 
   count(nom) %>% 
@@ -100,8 +96,9 @@ ggplot(nb_tweets, aes(x = nom, y = n)) +
        x = NULL,
        y = NULL) +
   theme(legend.position = "top")
-
 ```
+
+![](03_Automatisation_files/figure-html/nb_tweets-1.png)<!-- -->
 
 Près de la moitié des candidats n'ont pas retweeté, et Nathalie Arthaud n'a fait que retwetter pendant le débat.
 
@@ -109,11 +106,5 @@ Près de la moitié des candidats n'ont pas retweeté, et Nathalie Arthaud n'a f
 
 Qui sont les personnes retweetées ?
 
-```{r retweets}
-tweets_debat %>% 
-  filter(!is.na(rt_nom)) %>%
-  group_by(nom) %>% 
-  count(rt_nom, sort = TRUE) %>% 
-  datatable()
-```
+
 
